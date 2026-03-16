@@ -1,0 +1,5 @@
+dist/
+gtkai
+gtk
+*.exe
+~/.gtk-ai/
