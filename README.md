@@ -2,11 +2,11 @@
 
 ![Go](https://img.shields.io/badge/Go-1.22+-00ADD8?style=flat&logo=go&logoColor=white)
 ![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat)
-![License](https://img.shields.io/badge/license-MIT-green?style=flat)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat)
 ![Claude Code](https://img.shields.io/badge/Claude%20Code-hook%20compatible-blueviolet?style=flat)
 ![Build](https://img.shields.io/badge/build-passing-brightgreen?style=flat)
 
-**Go Token Killer** — modular token compression proxy for Claude Code. Single binary, zero dependencies, plug-and-play.
+**Go Token Killer**: modular token compression proxy for Claude Code. Single binary, zero dependencies, plug-and-play.
 
 gtkai sits between Claude Code and your shell as a `PostToolUse` hook. It intercepts command output before it reaches the agent, compresses it to the relevant parts, and records the savings. The less Claude reads, the less you pay.
 
@@ -17,15 +17,15 @@ Claude → Bash("find . -name '*.rs'")
               ↓ PostToolUse → gtkai hook-post
          📁 84 results / ext: .rs(84) / ...10 paths shown
               ↓
-         Claude receives compressed output — same information, fewer tokens
+         Claude receives compressed output (same information, fewer tokens)
 ```
 
 ## Why Go
 
-- **Single binary** — `go build` produces one static executable, no runtime required
-- **Instant startup** — hooks run on every tool call; Go's startup time is negligible
-- **Easy distribution** — `brew install`, `curl | sh`, or drop the binary anywhere in PATH
-- **Modular by design** — each command is an independent Go package that registers itself at init time
+- **Single binary**: `go build` produces one static executable, no runtime required
+- **Instant startup**: hooks run on every tool call; Go's startup time is negligible
+- **Easy distribution**: `brew install`, `curl | sh`, or drop the binary anywhere in PATH
+- **Modular by design**: each command is an independent Go package that registers itself at init time
 
 ## Benchmark
 
@@ -191,8 +191,8 @@ The `registry` package is the only shared dependency between modules. Modules ne
 
 ## Works well with
 
-**[hybrid-coco](https://github.com/jmeiracorbal/hybrid-coco)** — local code intelligence for Claude Code. While gtkai compresses shell output, hybrid-coco replaces file reads and grep with index queries (~90% savings on code navigation). Both operate independently via separate hooks and complement each other.
+**[hybrid-coco](https://github.com/jmeiracorbal/hybrid-coco)**: local code intelligence for Claude Code. While gtkai compresses shell output, hybrid-coco replaces file reads and grep with index queries on code navigation. Both operate independently via separate hooks and complement each other.
 
 ## License
 
-MIT
+Apache 2.0, see [LICENSE](LICENSE). Attribution required on redistribution.
