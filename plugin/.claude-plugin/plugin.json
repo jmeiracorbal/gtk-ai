@@ -1,0 +1,11 @@
+{
+  "name": "gtk-ai",
+  "description": "Token compression proxy. Intercepts Bash output (find, ls, git, grep) and compresses it before Claude reads it.",
+  "version": "0.1.0",
+  "author": {
+    "name": "jmeiracorbal"
+  },
+  "homepage": "https://github.com/jmeiracorbal/gtk-ai",
+  "repository": "https://github.com/jmeiracorbal/gtk-ai",
+  "license": "Apache-2.0"
+}

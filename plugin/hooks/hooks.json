@@ -1,0 +1,17 @@
+{
+  "description": "gtk-ai PostToolUse hook: compress Bash output before Claude reads it",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/gtkai-post-tool-use.sh",
+            "async": false
+          }
+        ]
+      }
+    ]
+  }
+}
