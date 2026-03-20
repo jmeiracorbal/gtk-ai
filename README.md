@@ -58,13 +58,24 @@ Efficiency:     ██████████████████░░ 74.
 
 ### 1. Install
 
+**Option A: One-line installer (recommended)**
+
 ```bash
 curl -sSL https://raw.githubusercontent.com/jmeiracorbal/gtk-ai/main/install.sh | sh
 ```
 
-The script detects your OS and architecture, downloads a pre-built binary (or builds from source if Go is available), installs the hook, and patches `~/.claude/settings.json` automatically.
+Detects your OS and architecture, downloads the binary, installs the hook, and patches `~/.claude/settings.json` automatically.
 
-**Manual install** (requires Go 1.22+):
+**Option B: Claude Code plugin**
+
+```bash
+claude plugin marketplace add jmeiracorbal/gtk-ai
+claude plugin install gtk-ai@gtk-ai
+```
+
+Registers the PostToolUse hook automatically. Requires `gtkai` in PATH — download the binary for your platform from [GitHub Releases](https://github.com/jmeiracorbal/gtk-ai/releases) and place it in `~/.local/bin/`.
+
+**Option C: Manual install** (requires Go 1.22+):
 
 ```bash
 git clone https://github.com/jmeiracorbal/gtk-ai
