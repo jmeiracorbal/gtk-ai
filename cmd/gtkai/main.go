@@ -17,19 +17,19 @@ import (
 	_ "github.com/jmeiracorbal/gtk-ai/modules/ls"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `gtkai %s — Go Token Killer
 
 Usage:
-  gtkai hook-post            PostToolUse hook — reads stdin, compresses Bash + MCP output
+  gtkai hook-post            PostToolUse hook — reads stdin, compresses Bash + MCP + Read output
   gtkai gain                 Show token savings analytics
   gtkai version              Print version
 
 Claude Code integration:
   Register as PostToolUse hook in ~/.claude/settings.json:
-    matcher: "Bash|mcp__.*"
+    matcher: "Bash|mcp__.*|Read"
     command: "gtkai hook-post"
 
 Environment:

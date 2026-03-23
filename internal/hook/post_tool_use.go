@@ -11,6 +11,7 @@ import (
 
 	"github.com/jmeiracorbal/gtk-ai/internal/registry"
 	gitmod "github.com/jmeiracorbal/gtk-ai/modules/git"
+	readmod "github.com/jmeiracorbal/gtk-ai/modules/read"
 )
 
 // ── Input structures ──────────────────────────────────────────────────────────
@@ -33,6 +34,10 @@ type hookInput struct {
 
 type bashInput struct {
 	Command string `json:"command"`
+}
+
+type readInput struct {
+	FilePath string `json:"file_path"`
 }
 
 // ── Output structures ─────────────────────────────────────────────────────────
@@ -96,6 +101,8 @@ func Run(r io.Reader, w io.Writer) (bool, error) {
 	switch {
 	case input.ToolName == "Bash":
 		return handleBash(input, w)
+	case input.ToolName == "Read":
+		return handleRead(input, w)
 	case strings.HasPrefix(input.ToolName, "mcp__"):
 		return handleMCP(input, w)
 	}
@@ -189,6 +196,38 @@ func handleMCP(input hookInput, w io.Writer) (bool, error) {
 		if c.Type == "text" && len(c.Text) > mcpMaxChars {
 			contents[i].Text = c.Text[:mcpMaxChars] +
 				fmt.Sprintf("\n... [gtkai: truncated %d chars]", len(c.Text)-mcpMaxChars)
+			modified = true
+		}
+	}
+
+	if !modified {
+		return false, nil
+	}
+
+	return writeOutput(w, nil, contents)
+}
+
+// ── Read handler ──────────────────────────────────────────────────────────────
+
+func handleRead(input hookInput, w io.Writer) (bool, error) {
+	var ri readInput
+	if err := json.Unmarshal(input.ToolInput, &ri); err != nil {
+		return false, nil
+	}
+
+	var contents []textContent
+	if err := json.Unmarshal(input.ToolResp, &contents); err != nil {
+		return false, nil
+	}
+
+	modified := false
+	for i, c := range contents {
+		if c.Type != "text" || c.Text == "" {
+			continue
+		}
+		filtered, changed := readmod.FilterContent(ri.FilePath, c.Text)
+		if changed {
+			contents[i].Text = filtered
 			modified = true
 		}
 	}
