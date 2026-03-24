@@ -166,13 +166,15 @@ No other changes needed.
 
 ## MCP passthrough
 
-By default, gtkai compresses all `mcp__*` tool responses above 3,000 chars. To exempt specific tools from compression, set:
+By default, gtkai compresses all `mcp__*` tool responses above 3,000 chars. To exempt specific tools, set `GTK_MCP_PASSTHROUGH_PATTERNS` in your shell configuration file (`.zshrc`, `.bashrc`, `.profile`, or whichever your shell uses):
 
-```bash
+```sh
 export GTK_MCP_PASSTHROUGH_PATTERNS="my_tool_*,other_tool"
 ```
 
 Pattern syntax: exact name or glob prefix (`prefix_*`).
+
+To identify which tools to exempt, check the tool names returned by your MCP servers — any tool whose output should reach the agent unmodified (e.g. structured symbol data, memory results) should be listed here.
 
 ## Commands
 

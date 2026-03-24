@@ -17,7 +17,7 @@ import (
 	_ "github.com/jmeiracorbal/gtk-ai/modules/ls"
 )
 
-const version = "0.1.1"
+const version = "0.1.2"
 
 func usage() {
 	fmt.Fprintf(os.Stderr, `gtkai %s — Go Token Killer
