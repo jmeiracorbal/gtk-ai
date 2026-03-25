@@ -9,6 +9,7 @@ import (
 
 	"github.com/jmeiracorbal/gtk-ai/internal/hook"
 	"github.com/jmeiracorbal/gtk-ai/modules/gain"
+	"github.com/jmeiracorbal/gtk-ai/modules/mcpscan"
 
 	// Register all built-in modules
 	_ "github.com/jmeiracorbal/gtk-ai/modules/find"
@@ -24,6 +25,7 @@ func usage() {
 
 Usage:
   gtkai hook-post            PostToolUse hook — reads stdin, compresses Bash + MCP + Read output
+  gtkai mcp-scan             List tools from all MCP servers, suggest passthrough prefixes
   gtkai gain                 Show token savings analytics
   gtkai version              Print version
 
@@ -56,6 +58,12 @@ func main() {
 		}
 		_ = modified
 		os.Exit(0)
+
+	case "mcp-scan":
+		if err := mcpscan.Run(); err != nil {
+			fmt.Fprintf(os.Stderr, "gtkai mcp-scan: %v\n", err)
+			os.Exit(1)
+		}
 
 	case "gain":
 		t, err := gain.Open()
