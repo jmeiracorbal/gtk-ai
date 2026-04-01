@@ -3,3 +3,6 @@ dist/
 /gtk
 *.exe
 ~/.gtk-ai/
+
+.claude/
+.hybrid-coco/
