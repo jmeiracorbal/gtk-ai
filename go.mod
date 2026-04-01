@@ -1,6 +1,6 @@
 module github.com/jmeiracorbal/gtk-ai
 
-go 1.22
+go 1.26.1
 
 require modernc.org/sqlite v1.29.10
 

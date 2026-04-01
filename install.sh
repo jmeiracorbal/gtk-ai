@@ -7,8 +7,6 @@ set -e
 REPO="jmeiracorbal/gtk-ai"
 BINARY="gtkai"
 INSTALL_DIR="${GTKAI_INSTALL_DIR:-$HOME/.local/bin}"
-HOOK_DIR="$HOME/.claude/hooks"
-SETTINGS="$HOME/.claude/settings.json"
 TMP_DIR=$(mktemp -d)
 
 # ── Colours ───────────────────────────────────────────────────────────────────
@@ -57,7 +55,7 @@ esac
 info "OS:   $OS"
 info "Arch: $ARCH"
 
-# ── Detect installation method ────────────────────────────────────────────────
+# ── Detect tools ──────────────────────────────────────────────────────────────
 
 header "Checking dependencies"
 
@@ -65,13 +63,13 @@ HAS_GO=false
 HAS_CURL=false
 HAS_WGET=false
 
-command -v go    >/dev/null 2>&1 && HAS_GO=true    && success "Go found: $(go version | awk '{print $3}')"
-command -v curl  >/dev/null 2>&1 && HAS_CURL=true  && success "curl found"
+command -v go    >/dev/null 2>&1 && HAS_GO=true   && success "Go found: $(go version | awk '{print $3}')"
+command -v curl  >/dev/null 2>&1 && HAS_CURL=true && success "curl found"
 command -v wget  >/dev/null 2>&1 && HAS_WGET=true
 
-# ── Download helper ───────────────────────────────────────────────────────────
+# ── Download helpers ──────────────────────────────────────────────────────────
 
-download() {
+fetch() {
   url="$1"
   dest="$2"
   if $HAS_CURL; then
@@ -83,45 +81,78 @@ download() {
   fi
 }
 
+fetch_stdout() {
+  url="$1"
+  if $HAS_CURL; then
+    curl -sSL "$url"
+  elif $HAS_WGET; then
+    wget -q "$url" -O -
+  else
+    error "Neither curl nor wget found. Install one and retry."
+  fi
+}
+
 # ── Install binary ────────────────────────────────────────────────────────────
 
 header "Installing $BINARY"
 
 mkdir -p "$INSTALL_DIR"
 
-# Try to download pre-built binary from GitHub releases first
-RELEASE_URL="https://github.com/$REPO/releases/latest/download/${BINARY}-${OS}-${ARCH}"
+ASSET_NAME="${BINARY}-${OS}-${ARCH}"
+RELEASE_URL="https://github.com/$REPO/releases/latest/download/$ASSET_NAME"
+CHECKSUM_URL="https://github.com/$REPO/releases/latest/download/${ASSET_NAME}.sha256"
 
 if $HAS_CURL || $HAS_WGET; then
   info "Trying pre-built binary..."
+
   HTTP_CODE=0
   if $HAS_CURL; then
     HTTP_CODE=$(curl -sSL -o "$TMP_DIR/$BINARY" -w "%{http_code}" "$RELEASE_URL" 2>/dev/null || echo 0)
+  elif $HAS_WGET; then
+    wget -q "$RELEASE_URL" -O "$TMP_DIR/$BINARY" 2>/dev/null && HTTP_CODE=200 || HTTP_CODE=0
   fi
 
   if [ "$HTTP_CODE" = "200" ]; then
-    chmod +x "$TMP_DIR/$BINARY"
+    info "Verifying checksum..."
+    EXPECTED=$(fetch_stdout "$CHECKSUM_URL" | awk '{print $1}')
+    if [ -z "$EXPECTED" ]; then
+      warn "Could not fetch checksum — skipping verification"
+    else
+      if command -v shasum >/dev/null 2>&1; then
+        ACTUAL=$(shasum -a 256 "$TMP_DIR/$BINARY" | awk '{print $1}')
+      elif command -v sha256sum >/dev/null 2>&1; then
+        ACTUAL=$(sha256sum "$TMP_DIR/$BINARY" | awk '{print $1}')
+      else
+        warn "No SHA256 tool found (shasum/sha256sum) — skipping verification"
+        ACTUAL="$EXPECTED"
+      fi
+
+      if [ "$ACTUAL" != "$EXPECTED" ]; then
+        error "Checksum mismatch. Expected: $EXPECTED  Got: $ACTUAL"
+      fi
+      success "Checksum verified"
+    fi
+
     mv "$TMP_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
+    chmod +x "$INSTALL_DIR/$BINARY"
     success "Binary downloaded from GitHub releases"
   else
-    # Fall back to building from source
     info "No pre-built binary found — building from source"
 
     if ! $HAS_GO; then
       error "Go is required to build from source. Install it from https://go.dev/dl/ and retry."
     fi
 
-    info "Cloning repository..."
-    CLONE_DIR="$TMP_DIR/gtk-ai"
-    if command -v git >/dev/null 2>&1; then
-      git clone --depth 1 "https://github.com/$REPO.git" "$CLONE_DIR" >/dev/null 2>&1
-    else
+    if ! command -v git >/dev/null 2>&1; then
       error "git is required to build from source. Install it and retry."
     fi
 
+    info "Cloning repository..."
+    git clone --depth 1 "https://github.com/$REPO.git" "$TMP_DIR/gtk-ai" >/dev/null 2>&1
+
     info "Building $BINARY..."
-    cd "$CLONE_DIR"
-    go build -o "$INSTALL_DIR/$BINARY" ./cmd/gtkai/ 2>/dev/null
+    cd "$TMP_DIR/gtk-ai"
+    go build -o "$INSTALL_DIR/$BINARY" ./cmd/gtkai/
     cd - >/dev/null
     success "Built from source"
   fi
@@ -157,105 +188,18 @@ case "$SHELL" in
   *)      add_to_path "$HOME/.profile" ;;
 esac
 
-# Ensure binary is reachable right now
 export PATH="$INSTALL_DIR:$PATH"
 
-# ── Install Claude Code hook ──────────────────────────────────────────────────
-
-header "Installing Claude Code hook"
-
-mkdir -p "$HOOK_DIR"
-HOOK_FILE="$HOOK_DIR/gtkai-post-tool-use.sh"
-
-cat > "$HOOK_FILE" <<'HOOK'
-#!/bin/sh
-# gtkai PostToolUse hook for Claude Code.
-command -v gtkai >/dev/null 2>&1 || exit 0
-exec gtkai hook-post
-HOOK
-
-chmod +x "$HOOK_FILE"
-success "Hook installed: $HOOK_FILE"
-
-# ── Patch ~/.claude/settings.json ─────────────────────────────────────────────
+# ── Claude Code setup ─────────────────────────────────────────────────────────
 
 header "Configuring Claude Code"
 
-if ! command -v python3 >/dev/null 2>&1; then
-  warn "python3 not found — skipping settings.json patch"
-  warn "Add the hook manually to $SETTINGS (see README)"
-else
-  python3 - "$SETTINGS" "$HOOK_FILE" <<'PYEOF'
-import json, sys, os
-
-settings_path = sys.argv[1]
-hook_path     = sys.argv[2]
-
-# Load or create settings
-if os.path.exists(settings_path):
-  try:
-    data = json.loads(open(settings_path).read())
-  except (json.JSONDecodeError, OSError):
-    data = {}
-else:
-  data = {}
-
-data.setdefault("hooks", {})
-data["hooks"].setdefault("PostToolUse", [])
-
-hook_entry = {
-  "matcher": "Bash|mcp__.*",
-  "hooks": [{"type": "command", "command": hook_path}]
-}
-
-# Check if already registered
-already = any(
-  any(h.get("command") == hook_path for h in e.get("hooks", []))
-  for e in data["hooks"]["PostToolUse"]
-)
-
-if not already:
-  data["hooks"]["PostToolUse"].append(hook_entry)
-  os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-  open(settings_path, "w").write(json.dumps(data, indent=2) + "\n")
-  print("patched")
-else:
-  print("already_present")
-PYEOF
-
-  PATCH_RESULT=$(python3 - "$SETTINGS" "$HOOK_FILE" <<'PYEOF'
-import json, sys, os
-settings_path = sys.argv[1]
-hook_path     = sys.argv[2]
-if os.path.exists(settings_path):
-  try:
-    data = json.loads(open(settings_path).read())
-  except: data = {}
-else:
-  data = {}
-data.setdefault("hooks", {})
-data["hooks"].setdefault("PostToolUse", [])
-hook_entry = {"matcher": "Bash|mcp__.*", "hooks": [{"type": "command", "command": hook_path}]}
-already = any(any(h.get("command") == hook_path for h in e.get("hooks", [])) for e in data["hooks"]["PostToolUse"])
-if not already:
-  data["hooks"]["PostToolUse"].append(hook_entry)
-  os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-  open(settings_path, "w").write(json.dumps(data, indent=2) + "\n")
-print("ok" if not already else "skip")
-PYEOF
-)
-
-  if [ "$PATCH_RESULT" = "ok" ]; then
-    success "Hook registered in $SETTINGS"
-  else
-    info "Hook already registered in $SETTINGS"
-  fi
-fi
+"$INSTALL_DIR/$BINARY" setup
 
 # ── RTK warning ───────────────────────────────────────────────────────────────
 
 if command -v rtk >/dev/null 2>&1; then
-  warn "RTK is installed. To avoid conflicts, remove its hooks from $SETTINGS"
+  warn "RTK is installed. To avoid conflicts, remove its hooks from ~/.claude/settings.json"
   warn "Look for entries referencing rtk-rewrite.sh or rtk-post-tool-use.sh"
 fi
 
@@ -266,6 +210,5 @@ rm -rf "$TMP_DIR"
 # ── Done ──────────────────────────────────────────────────────────────────────
 
 printf "\n${BOLD}${GREEN}gtk-ai installed successfully!${RESET}\n\n"
-info "Restart Claude Code to activate the hook"
 info "Run 'gtkai gain' to track token savings"
 printf "\n"
