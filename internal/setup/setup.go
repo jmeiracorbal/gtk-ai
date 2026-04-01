@@ -1,13 +1,14 @@
 // Package setup installs gtk-ai into a Claude Code environment.
 //
 // Registration order:
-//  1. Plugin registry → ~/.claude/settings.json (enabledPlugins + extraKnownMarketplaces)
-//  2. Protocol doc    → ~/.claude/gtk-ai.md
-//  3. CLAUDE.md       → append @gtk-ai.md
+//  1. Marketplace     → ~/.claude/settings.json (extraKnownMarketplaces)
+//  2. Plugin install  → `claude plugin install -s user gtk-ai@gtk-ai`
+//  3. Protocol doc    → ~/.claude/gtk-ai.md
+//  4. CLAUDE.md       → append @gtk-ai.md
 //
 // Hooks are managed by Claude Code's plugin system via hooks/hooks.json.
-// setup does not write hooks to settings.json — that would duplicate the
-// plugin-managed hooks and run compression twice per tool call.
+// The plugin install triggers Claude Code to download the repo and activate
+// the PostToolUse hook from hooks/hooks.json via ${CLAUDE_PLUGIN_ROOT}.
 package setup
 
 import (
@@ -15,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -43,8 +45,12 @@ func Install(dryRun bool) error {
 	}
 	fmt.Println("───────────────────────────────────────")
 
-	if err := previewOrRegisterPlugin(settingsPath, dryRun); err != nil {
+	if err := previewOrRegisterMarketplace(settingsPath, dryRun); err != nil {
 		return fmt.Errorf("settings.json: %w", err)
+	}
+
+	if err := previewOrInstallPlugin(dryRun); err != nil {
+		return fmt.Errorf("plugin install: %w", err)
 	}
 
 	if err := previewOrWriteProtocol(protocolPath, dryRun); err != nil {
@@ -61,33 +67,14 @@ func Install(dryRun bool) error {
 	return nil
 }
 
-// ─── Plugin registry (enabledPlugins + extraKnownMarketplaces) ───────────────
+// ─── Marketplace registration ─────────────────────────────────────────────────
 
-func previewOrRegisterPlugin(settingsPath string, dryRun bool) error {
+func previewOrRegisterMarketplace(settingsPath string, dryRun bool) error {
 	config, err := readJSON(settingsPath)
 	if err != nil {
 		return err
 	}
 
-	changed := false
-
-	// enabledPlugins
-	var enabledPlugins map[string]json.RawMessage
-	if raw, ok := config["enabledPlugins"]; ok {
-		if err := json.Unmarshal(raw, &enabledPlugins); err != nil {
-			enabledPlugins = make(map[string]json.RawMessage)
-		}
-	} else {
-		enabledPlugins = make(map[string]json.RawMessage)
-	}
-	if _, ok := enabledPlugins["gtk-ai@gtk-ai"]; !ok {
-		enabledPlugins["gtk-ai@gtk-ai"] = json.RawMessage("true")
-		raw, _ := json.Marshal(enabledPlugins)
-		config["enabledPlugins"] = raw
-		changed = true
-	}
-
-	// extraKnownMarketplaces
 	var marketplaces map[string]json.RawMessage
 	if raw, ok := config["extraKnownMarketplaces"]; ok {
 		if err := json.Unmarshal(raw, &marketplaces); err != nil {
@@ -96,39 +83,60 @@ func previewOrRegisterPlugin(settingsPath string, dryRun bool) error {
 	} else {
 		marketplaces = make(map[string]json.RawMessage)
 	}
-	if _, ok := marketplaces["gtk-ai"]; !ok {
-		entry := map[string]interface{}{
-			"source": map[string]interface{}{
-				"source": "github",
-				"repo":   "jmeiracorbal/gtk-ai",
-			},
-		}
-		entryRaw, _ := json.Marshal(entry)
-		marketplaces["gtk-ai"] = entryRaw
-		mRaw, _ := json.Marshal(marketplaces)
-		config["extraKnownMarketplaces"] = mRaw
-		changed = true
-	}
 
-	if !changed {
+	if _, ok := marketplaces["gtk-ai"]; ok {
 		if dryRun {
-			fmt.Println("[~/.claude/settings.json] — already up to date")
+			fmt.Println("[~/.claude/settings.json] — marketplace gtk-ai already registered")
 		} else {
-			fmt.Println("✓ ~/.claude/settings.json — already up to date")
+			fmt.Println("✓ ~/.claude/settings.json — marketplace already registered")
 		}
 		return nil
 	}
 
+	entry := map[string]interface{}{
+		"source": map[string]interface{}{
+			"source": "github",
+			"repo":   "jmeiracorbal/gtk-ai",
+		},
+	}
+	entryRaw, _ := json.Marshal(entry)
+	marketplaces["gtk-ai"] = entryRaw
+	mRaw, _ := json.Marshal(marketplaces)
+	config["extraKnownMarketplaces"] = mRaw
+
 	if dryRun {
-		out, _ := json.MarshalIndent(config, "", "  ")
-		fmt.Printf("[~/.claude/settings.json]\n%s\n", string(out))
+		fmt.Println("[~/.claude/settings.json] — would register marketplace gtk-ai")
 		return nil
 	}
 
 	if err := writeJSON(settingsPath, config); err != nil {
 		return err
 	}
-	fmt.Println("✓ ~/.claude/settings.json updated (plugin registry)")
+	fmt.Println("✓ ~/.claude/settings.json — marketplace gtk-ai registered")
+	return nil
+}
+
+// ─── Plugin install via claude CLI ───────────────────────────────────────────
+
+func previewOrInstallPlugin(dryRun bool) error {
+	if dryRun {
+		fmt.Println("[claude plugin install] — would run: claude plugin install -s user gtk-ai@gtk-ai")
+		return nil
+	}
+
+	// Check if already installed
+	listOut, _ := exec.Command("claude", "plugin", "list").CombinedOutput()
+	if strings.Contains(string(listOut), "gtk-ai@gtk-ai") {
+		fmt.Println("✓ plugin gtk-ai — already installed")
+		return nil
+	}
+
+	cmd := exec.Command("claude", "plugin", "install", "-s", "user", "gtk-ai@gtk-ai")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("claude plugin install failed: %w\n%s", err, string(out))
+	}
+	fmt.Println("✓ plugin gtk-ai installed via claude plugin install")
 	return nil
 }
 
