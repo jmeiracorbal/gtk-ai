@@ -1,10 +1,11 @@
 // Package setup installs gtk-ai into a Claude Code environment.
 //
 // Registration order:
-//  1. Hook script  → ~/.claude/hooks/gtkai-post-tool-use.sh
-//  2. PostToolUse  → ~/.claude/settings.json
-//  3. Protocol doc → ~/.claude/gtk-ai.md
-//  4. CLAUDE.md    → append @gtk-ai.md
+//  1. Hook script       → ~/.claude/hooks/gtkai-post-tool-use.sh
+//  2. PostToolUse       → ~/.claude/settings.json
+//  3. Plugin registry   → ~/.claude/settings.json (enabledPlugins + extraKnownMarketplaces)
+//  4. Protocol doc      → ~/.claude/gtk-ai.md
+//  5. CLAUDE.md         → append @gtk-ai.md
 package setup
 
 import (
@@ -53,7 +54,7 @@ func Install(dryRun bool) error {
 		return fmt.Errorf("hook: %w", err)
 	}
 
-	if err := previewOrInjectSettings(settingsPath, hookPath, dryRun); err != nil {
+	if err := previewOrInjectSettingsAndPlugin(settingsPath, hookPath, dryRun); err != nil {
 		return fmt.Errorf("settings.json: %w", err)
 	}
 
@@ -89,37 +90,80 @@ func previewOrWriteHook(path string, dryRun bool) error {
 	return nil
 }
 
-// ─── settings.json ────────────────────────────────────────────────────────────
+// ─── settings.json (hook + plugin registry) ──────────────────────────────────
 
-func previewOrInjectSettings(settingsPath, hookPath string, dryRun bool) error {
+func previewOrInjectSettingsAndPlugin(settingsPath, hookPath string, dryRun bool) error {
 	config, err := readJSON(settingsPath)
 	if err != nil {
 		return err
 	}
 
+	changed := false
+
+	// PostToolUse hook
 	hooks, err := unmarshalHooks(config)
 	if err != nil {
 		return err
 	}
+	if !hookAlreadyRegistered(hooks, hookPath) {
+		if err := appendPostToolUseHook(hooks, hookPath); err != nil {
+			return err
+		}
+		encoded, err := json.Marshal(hooks)
+		if err != nil {
+			return err
+		}
+		config["hooks"] = encoded
+		changed = true
+	}
 
-	if hookAlreadyRegistered(hooks, hookPath) {
+	// enabledPlugins
+	var enabledPlugins map[string]json.RawMessage
+	if raw, ok := config["enabledPlugins"]; ok {
+		if err := json.Unmarshal(raw, &enabledPlugins); err != nil {
+			enabledPlugins = make(map[string]json.RawMessage)
+		}
+	} else {
+		enabledPlugins = make(map[string]json.RawMessage)
+	}
+	if _, ok := enabledPlugins["gtk-ai@gtk-ai"]; !ok {
+		enabledPlugins["gtk-ai@gtk-ai"] = json.RawMessage("true")
+		raw, _ := json.Marshal(enabledPlugins)
+		config["enabledPlugins"] = raw
+		changed = true
+	}
+
+	// extraKnownMarketplaces
+	var marketplaces map[string]json.RawMessage
+	if raw, ok := config["extraKnownMarketplaces"]; ok {
+		if err := json.Unmarshal(raw, &marketplaces); err != nil {
+			marketplaces = make(map[string]json.RawMessage)
+		}
+	} else {
+		marketplaces = make(map[string]json.RawMessage)
+	}
+	if _, ok := marketplaces["gtk-ai"]; !ok {
+		entry := map[string]interface{}{
+			"source": map[string]interface{}{
+				"source": "github",
+				"repo":   "jmeiracorbal/gtk-ai",
+			},
+		}
+		entryRaw, _ := json.Marshal(entry)
+		marketplaces["gtk-ai"] = entryRaw
+		mRaw, _ := json.Marshal(marketplaces)
+		config["extraKnownMarketplaces"] = mRaw
+		changed = true
+	}
+
+	if !changed {
 		if dryRun {
-			fmt.Printf("\n[~/.claude/settings.json] — PostToolUse hook already registered\n")
+			fmt.Println("\n[~/.claude/settings.json] — already up to date")
 		} else {
 			fmt.Println("✓ ~/.claude/settings.json — already up to date")
 		}
 		return nil
 	}
-
-	if err := appendPostToolUseHook(hooks, hookPath); err != nil {
-		return err
-	}
-
-	encoded, err := json.Marshal(hooks)
-	if err != nil {
-		return err
-	}
-	config["hooks"] = encoded
 
 	if dryRun {
 		out, _ := json.MarshalIndent(config, "", "  ")
@@ -130,7 +174,7 @@ func previewOrInjectSettings(settingsPath, hookPath string, dryRun bool) error {
 	if err := writeJSON(settingsPath, config); err != nil {
 		return err
 	}
-	fmt.Println("✓ ~/.claude/settings.json updated (PostToolUse hook)")
+	fmt.Println("✓ ~/.claude/settings.json updated (hook + plugin registry)")
 	return nil
 }
 
