@@ -1,11 +1,13 @@
 // Package setup installs gtk-ai into a Claude Code environment.
 //
 // Registration order:
-//  1. Hook script       → ~/.claude/hooks/gtkai-post-tool-use.sh
-//  2. PostToolUse       → ~/.claude/settings.json
-//  3. Plugin registry   → ~/.claude/settings.json (enabledPlugins + extraKnownMarketplaces)
-//  4. Protocol doc      → ~/.claude/gtk-ai.md
-//  5. CLAUDE.md         → append @gtk-ai.md
+//  1. Plugin registry → ~/.claude/settings.json (enabledPlugins + extraKnownMarketplaces)
+//  2. Protocol doc    → ~/.claude/gtk-ai.md
+//  3. CLAUDE.md       → append @gtk-ai.md
+//
+// Hooks are managed by Claude Code's plugin system via hooks/hooks.json.
+// setup does not write hooks to settings.json — that would duplicate the
+// plugin-managed hooks and run compression twice per tool call.
 package setup
 
 import (
@@ -17,17 +19,10 @@ import (
 	"strings"
 )
 
-//go:embed hooks/gtkai-post-tool-use.sh
-var hookScript []byte
-
 //go:embed templates/gtk-ai.md
 var protocolDoc []byte
 
-const (
-	claudeMDReference = "@gtk-ai.md"
-	hookMatcher       = "Bash|mcp__.*|Read"
-	hookScriptName    = "gtkai-post-tool-use.sh"
-)
+const claudeMDReference = "@gtk-ai.md"
 
 // Install configures gtk-ai in the local Claude Code environment.
 // If dryRun is true, prints what would change without writing anything.
@@ -37,8 +32,6 @@ func Install(dryRun bool) error {
 		return fmt.Errorf("home dir: %w", err)
 	}
 
-	hooksDir := filepath.Join(home, ".claude", "hooks")
-	hookPath := filepath.Join(hooksDir, hookScriptName)
 	settingsPath := filepath.Join(home, ".claude", "settings.json")
 	protocolPath := filepath.Join(home, ".claude", "gtk-ai.md")
 	claudeMDPath := filepath.Join(home, ".claude", "CLAUDE.md")
@@ -50,11 +43,7 @@ func Install(dryRun bool) error {
 	}
 	fmt.Println("───────────────────────────────────────")
 
-	if err := previewOrWriteHook(hookPath, dryRun); err != nil {
-		return fmt.Errorf("hook: %w", err)
-	}
-
-	if err := previewOrInjectSettingsAndPlugin(settingsPath, hookPath, dryRun); err != nil {
+	if err := previewOrRegisterPlugin(settingsPath, dryRun); err != nil {
 		return fmt.Errorf("settings.json: %w", err)
 	}
 
@@ -72,50 +61,15 @@ func Install(dryRun bool) error {
 	return nil
 }
 
-// ─── Hook script ──────────────────────────────────────────────────────────────
+// ─── Plugin registry (enabledPlugins + extraKnownMarketplaces) ───────────────
 
-func previewOrWriteHook(path string, dryRun bool) error {
-	if dryRun {
-		fmt.Printf("[~/.claude/hooks/] — would write:\n  %s\n", hookScriptName)
-		return nil
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path, hookScript, 0755); err != nil {
-		return err
-	}
-	fmt.Printf("✓ hook written to %s\n", path)
-	return nil
-}
-
-// ─── settings.json (hook + plugin registry) ──────────────────────────────────
-
-func previewOrInjectSettingsAndPlugin(settingsPath, hookPath string, dryRun bool) error {
+func previewOrRegisterPlugin(settingsPath string, dryRun bool) error {
 	config, err := readJSON(settingsPath)
 	if err != nil {
 		return err
 	}
 
 	changed := false
-
-	// PostToolUse hook
-	hooks, err := unmarshalHooks(config)
-	if err != nil {
-		return err
-	}
-	if !hookAlreadyRegistered(hooks, hookPath) {
-		if err := appendPostToolUseHook(hooks, hookPath); err != nil {
-			return err
-		}
-		encoded, err := json.Marshal(hooks)
-		if err != nil {
-			return err
-		}
-		config["hooks"] = encoded
-		changed = true
-	}
 
 	// enabledPlugins
 	var enabledPlugins map[string]json.RawMessage
@@ -158,7 +112,7 @@ func previewOrInjectSettingsAndPlugin(settingsPath, hookPath string, dryRun bool
 
 	if !changed {
 		if dryRun {
-			fmt.Println("\n[~/.claude/settings.json] — already up to date")
+			fmt.Println("[~/.claude/settings.json] — already up to date")
 		} else {
 			fmt.Println("✓ ~/.claude/settings.json — already up to date")
 		}
@@ -167,80 +121,14 @@ func previewOrInjectSettingsAndPlugin(settingsPath, hookPath string, dryRun bool
 
 	if dryRun {
 		out, _ := json.MarshalIndent(config, "", "  ")
-		fmt.Printf("\n[~/.claude/settings.json]\n%s\n", string(out))
+		fmt.Printf("[~/.claude/settings.json]\n%s\n", string(out))
 		return nil
 	}
 
 	if err := writeJSON(settingsPath, config); err != nil {
 		return err
 	}
-	fmt.Println("✓ ~/.claude/settings.json updated (hook + plugin registry)")
-	return nil
-}
-
-func unmarshalHooks(config map[string]json.RawMessage) (map[string]json.RawMessage, error) {
-	hooks := make(map[string]json.RawMessage)
-	if raw, ok := config["hooks"]; ok {
-		if err := json.Unmarshal(raw, &hooks); err != nil {
-			return nil, err
-		}
-	}
-	return hooks, nil
-}
-
-func hookAlreadyRegistered(hooks map[string]json.RawMessage, hookPath string) bool {
-	raw, ok := hooks["PostToolUse"]
-	if !ok {
-		return false
-	}
-	var entries []map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &entries); err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		hooksRaw, ok := entry["hooks"]
-		if !ok {
-			continue
-		}
-		var hs []map[string]json.RawMessage
-		if err := json.Unmarshal(hooksRaw, &hs); err != nil {
-			continue
-		}
-		for _, h := range hs {
-			cmdRaw, ok := h["command"]
-			if !ok {
-				continue
-			}
-			var cmd string
-			if err := json.Unmarshal(cmdRaw, &cmd); err == nil && cmd == hookPath {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func appendPostToolUseHook(hooks map[string]json.RawMessage, hookPath string) error {
-	entry := map[string]interface{}{
-		"matcher": hookMatcher,
-		"hooks": []map[string]interface{}{
-			{"type": "command", "command": hookPath},
-		},
-	}
-
-	var existing []interface{}
-	if raw, ok := hooks["PostToolUse"]; ok {
-		if err := json.Unmarshal(raw, &existing); err != nil {
-			existing = nil
-		}
-	}
-	existing = append(existing, entry)
-
-	raw, err := json.Marshal(existing)
-	if err != nil {
-		return err
-	}
-	hooks["PostToolUse"] = raw
+	fmt.Println("✓ ~/.claude/settings.json updated (plugin registry)")
 	return nil
 }
 
