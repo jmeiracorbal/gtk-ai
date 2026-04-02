@@ -50,11 +50,16 @@ func TestFilterStatusClean(t *testing.T) {
 }
 
 func TestFilterStatusUntrackedTruncated(t *testing.T) {
+	// Use long filenames so the formatted output is reliably shorter than raw,
+	// ensuring the length guard does not block the truncation path.
 	var sb strings.Builder
 	for i := 0; i < 15; i++ {
-		sb.WriteString("?? file_\n")
+		fmt.Fprintf(&sb, "?? internal/pkg/some/deeply/nested/module_%02d/handler.go\n", i)
 	}
 	out := filterStatus(sb.String())
+	if out == sb.String() {
+		t.Fatal("filterStatus returned original — length guard blocked compression, filenames may be too short")
+	}
 	if !strings.Contains(out, "+5 more") {
 		t.Errorf("expected truncation at 10 untracked, got: %s", out)
 	}

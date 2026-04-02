@@ -363,7 +363,9 @@ func TestReadTruncation(t *testing.T) {
 	raw := sb.String()
 
 	modified, out := runHook(t, readPayload("data.txt", raw))
-	_ = modified
+	if !modified {
+		t.Fatal("400-line file should always be truncated regardless of language detection")
+	}
 
 	var result struct {
 		HookSpecificOutput struct {
@@ -376,7 +378,7 @@ func TestReadTruncation(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 	if len(result.HookSpecificOutput.UpdatedMCPOutput) == 0 {
-		t.Skip("data.txt has no lang detection, may not be modified")
+		t.Fatal("expected updatedMCPToolOutput in hook response for truncated read")
 	}
 	compressed := result.HookSpecificOutput.UpdatedMCPOutput[0].Text
 	reportGain(t, "read plain text (400 lines)", raw, compressed)
