@@ -70,10 +70,10 @@ cd gtk-ai
 go build -o ~/.local/bin/gtkai ./cmd/gtkai/
 ```
 
-Then run the install script to configure the Claude side:
+Then configure the Claude Code side without reinstalling the binary:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/jmeiracorbal/gtk-ai/main/install.sh | sh
+GTKAI_CLAUDE_ONLY=1 sh install.sh
 ```
 
 When it finishes, install the plugin:
