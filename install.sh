@@ -101,11 +101,12 @@ fetch_stdout() {
 # ── jq helpers ────────────────────────────────────────────────────────────────
 
 # Run jq and write output atomically; fails hard if jq errors.
+# Usage: jq_update [jq-options...] filter file
+# All arguments are passed to jq; the last argument is the file updated in place.
 jq_update() {
-  filter="$1"
-  file="$2"
+  eval "file=\${$#}"
   tmp=$(mktemp)
-  if ! jq "$filter" "$file" > "$tmp" 2>&1; then
+  if ! jq "$@" > "$tmp" 2>&1; then
     rm -f "$tmp"
     error "jq failed updating $file"
   fi
