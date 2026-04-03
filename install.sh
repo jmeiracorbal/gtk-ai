@@ -65,6 +65,11 @@ HAS_WGET=false
 command -v go    >/dev/null 2>&1 && HAS_GO=true   && success "Go found: $(go version | awk '{print $3}')"
 command -v curl  >/dev/null 2>&1 && HAS_CURL=true && success "curl found"
 command -v wget  >/dev/null 2>&1 && HAS_WGET=true
+command -v git   >/dev/null 2>&1 || error "git is required. Install it and retry."
+command -v jq    >/dev/null 2>&1 || warn "jq not found — marketplace JSON update will be skipped"
+
+HAS_JQ=false
+command -v jq >/dev/null 2>&1 && HAS_JQ=true
 
 # ── Download helpers ──────────────────────────────────────────────────────────
 
@@ -142,10 +147,6 @@ if $HAS_CURL || $HAS_WGET; then
       error "Go is required to build from source. Install it from https://go.dev/dl/ and retry."
     fi
 
-    if ! command -v git >/dev/null 2>&1; then
-      error "git is required to build from source. Install it and retry."
-    fi
-
     info "Cloning repository..."
     git clone --depth 1 "https://github.com/$REPO.git" "$TMP_DIR/gtk-ai" >/dev/null 2>&1
 
@@ -193,7 +194,102 @@ export PATH="$INSTALL_DIR:$PATH"
 
 header "Configuring Claude Code"
 
-"$INSTALL_DIR/$BINARY" setup
+CLAUDE_DIR="$HOME/.claude"
+SETTINGS_FILE="$CLAUDE_DIR/settings.json"
+KNOWN_MARKETPLACES="$CLAUDE_DIR/plugins/known_marketplaces.json"
+MARKETPLACE_DIR="$CLAUDE_DIR/plugins/marketplaces/gtk-ai"
+PROTOCOL_DOC="$CLAUDE_DIR/gtk-ai.md"
+CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+
+mkdir -p "$CLAUDE_DIR/plugins/marketplaces"
+
+# Register marketplace in settings.json
+if [ -f "$SETTINGS_FILE" ] && $HAS_JQ; then
+  if jq -e '.extraKnownMarketplaces["gtk-ai"]' "$SETTINGS_FILE" >/dev/null 2>&1; then
+    info "~/.claude/settings.json — marketplace gtk-ai already registered"
+  else
+    TMP_SETTINGS=$(mktemp)
+    jq '.extraKnownMarketplaces["gtk-ai"] = {"source": {"source": "github", "repo": "jmeiracorbal/gtk-ai"}}' \
+      "$SETTINGS_FILE" > "$TMP_SETTINGS" && mv "$TMP_SETTINGS" "$SETTINGS_FILE"
+    success "~/.claude/settings.json — marketplace gtk-ai registered"
+  fi
+elif [ ! -f "$SETTINGS_FILE" ]; then
+  cat > "$SETTINGS_FILE" <<'SETTINGS'
+{
+  "extraKnownMarketplaces": {
+    "gtk-ai": {
+      "source": {
+        "source": "github",
+        "repo": "jmeiracorbal/gtk-ai"
+      }
+    }
+  }
+}
+SETTINGS
+  success "~/.claude/settings.json — created with marketplace gtk-ai"
+else
+  warn "jq not found — skipping settings.json update. Add the marketplace manually."
+fi
+
+# Clone marketplace repo to local cache
+if [ -d "$MARKETPLACE_DIR/.git" ]; then
+  info "Marketplace cache exists — updating..."
+  git -C "$MARKETPLACE_DIR" pull --ff-only -q 2>/dev/null && success "~/.claude/plugins/marketplaces/gtk-ai updated" || warn "Could not update marketplace cache"
+else
+  info "Cloning marketplace cache..."
+  git clone --depth 1 "https://github.com/$REPO.git" "$MARKETPLACE_DIR" >/dev/null 2>&1
+  success "~/.claude/plugins/marketplaces/gtk-ai cloned"
+fi
+
+# Register in known_marketplaces.json
+NOW=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
+if [ -f "$KNOWN_MARKETPLACES" ] && $HAS_JQ; then
+  if jq -e '.["gtk-ai"]' "$KNOWN_MARKETPLACES" >/dev/null 2>&1; then
+    info "~/.claude/plugins/known_marketplaces.json — gtk-ai already indexed"
+  else
+    TMP_KM=$(mktemp)
+    jq --arg loc "$MARKETPLACE_DIR" --arg now "$NOW" \
+      '.["gtk-ai"] = {"source": {"source": "github", "repo": "jmeiracorbal/gtk-ai"}, "installLocation": $loc, "lastUpdated": $now}' \
+      "$KNOWN_MARKETPLACES" > "$TMP_KM" && mv "$TMP_KM" "$KNOWN_MARKETPLACES"
+    success "~/.claude/plugins/known_marketplaces.json — gtk-ai indexed"
+  fi
+elif ! [ -f "$KNOWN_MARKETPLACES" ]; then
+  cat > "$KNOWN_MARKETPLACES" <<KMEOF
+{
+  "gtk-ai": {
+    "source": {"source": "github", "repo": "jmeiracorbal/gtk-ai"},
+    "installLocation": "$MARKETPLACE_DIR",
+    "lastUpdated": "$NOW"
+  }
+}
+KMEOF
+  success "~/.claude/plugins/known_marketplaces.json — created with gtk-ai"
+else
+  warn "jq not found — skipping known_marketplaces.json update. Run: claude plugin install -s user gtk-ai@gtk-ai"
+fi
+
+# Write context doc
+cat > "$PROTOCOL_DOC" <<'PROTOCOL'
+## gtk-ai — rule-based output filtering
+
+gtk-ai is active as a PostToolUse hook. It intercepts Bash, grep, find, ls, git, and MCP tool output before it enters the context. Depending on the command, it applies truncation, extension grouping, condensed formatting, or comment line removal.
+
+Compression is transparent: no changes to your workflow are needed.
+PROTOCOL
+success "~/.claude/gtk-ai.md written"
+
+# Inject @gtk-ai.md into CLAUDE.md
+if [ -f "$CLAUDE_MD" ]; then
+  if grep -q "@gtk-ai.md" "$CLAUDE_MD" 2>/dev/null; then
+    info "~/.claude/CLAUDE.md — already up to date"
+  else
+    printf '\n@gtk-ai.md\n' >> "$CLAUDE_MD"
+    success "~/.claude/CLAUDE.md updated"
+  fi
+else
+  printf '@gtk-ai.md\n' > "$CLAUDE_MD"
+  success "~/.claude/CLAUDE.md created"
+fi
 
 # ── RTK warning ───────────────────────────────────────────────────────────────
 
@@ -208,4 +304,7 @@ rm -rf "$TMP_DIR"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
-printf "\n${BOLD}${GREEN}gtk-ai installed successfully!${RESET}\n\n"
+printf "\n${BOLD}${GREEN}gtk-ai installed.${RESET}\n\n"
+printf "To activate the Claude plugin, run:\n\n"
+printf "  ${BOLD}claude plugin install -s user gtk-ai@gtk-ai${RESET}\n\n"
+printf "Then restart Claude Code.\n\n"
