@@ -113,11 +113,6 @@ jq_update() {
   mv "$tmp" "$file"
 }
 
-jq_create() {
-  content="$1"
-  file="$2"
-  printf '%s\n' "$content" > "$file"
-}
 
 # ── Install binary ────────────────────────────────────────────────────────────
 
@@ -300,13 +295,9 @@ if [ -f "$KNOWN_MARKETPLACES" ] && $HAS_JQ; then
     success "$HOME/.claude/plugins/known_marketplaces.json — gtk-ai indexed"
   fi
 elif ! [ -f "$KNOWN_MARKETPLACES" ]; then
-  jq_create "{
-  \"gtk-ai\": {
-    \"source\": {\"source\": \"github\", \"repo\": \"jmeiracorbal/gtk-ai\"},
-    \"installLocation\": \"$MARKETPLACE_DIR\",
-    \"lastUpdated\": \"$NOW\"
-  }
-}" "$KNOWN_MARKETPLACES"
+  jq -n --arg loc "$MARKETPLACE_DIR" --arg now "$NOW" \
+    '{"gtk-ai": {"source": {"source": "github", "repo": "jmeiracorbal/gtk-ai"}, "installLocation": $loc, "lastUpdated": $now}}' \
+    > "$KNOWN_MARKETPLACES"
   success "$HOME/.claude/plugins/known_marketplaces.json — created with gtk-ai"
 else
   warn "jq not found — skipping known_marketplaces.json update."
