@@ -106,7 +106,7 @@ fetch_stdout() {
 jq_update() {
   eval "file=\${$#}"
   tmp=$(mktemp)
-  if ! jq "$@" > "$tmp" 2>&1; then
+  if ! jq "$@" > "$tmp"; then
     rm -f "$tmp"
     error "jq failed updating $file"
   fi
@@ -157,15 +157,18 @@ else
       info "Verifying checksum..."
       EXPECTED=$(fetch_stdout "$CHECKSUM_URL" | awk '{print $1}')
       if [ -z "$EXPECTED" ]; then
-        warn "Could not fetch checksum — skipping verification"
+        if [ "${GTKAI_SKIP_CHECKSUM:-}" = "1" ]; then
+          warn "Could not fetch checksum — proceeding because GTKAI_SKIP_CHECKSUM=1"
+        else
+          error "Could not fetch checksum. Set GTKAI_SKIP_CHECKSUM=1 to bypass."
+        fi
       else
         if command -v shasum >/dev/null 2>&1; then
           ACTUAL=$(shasum -a 256 "$TMP_DIR/$BINARY" | awk '{print $1}')
         elif command -v sha256sum >/dev/null 2>&1; then
           ACTUAL=$(sha256sum "$TMP_DIR/$BINARY" | awk '{print $1}')
         else
-          warn "No SHA256 tool found (shasum/sha256sum) — skipping verification"
-          ACTUAL="$EXPECTED"
+          error "No SHA256 tool found (shasum/sha256sum). Set GTKAI_SKIP_CHECKSUM=1 to bypass."
         fi
 
         if [ "$ACTUAL" != "$EXPECTED" ]; then
@@ -243,10 +246,10 @@ mkdir -p "$CLAUDE_DIR/plugins/marketplaces"
 # Register marketplace in settings.json
 if [ -f "$SETTINGS_FILE" ] && $HAS_JQ; then
   if jq -e '.extraKnownMarketplaces["gtk-ai"]' "$SETTINGS_FILE" >/dev/null 2>&1; then
-    info "~/.claude/settings.json — marketplace gtk-ai already registered"
+    info "$HOME/.claude/settings.json — marketplace gtk-ai already registered"
   else
     jq_update '.extraKnownMarketplaces["gtk-ai"] = {"source": {"source": "github", "repo": "jmeiracorbal/gtk-ai"}}' "$SETTINGS_FILE"
-    success "~/.claude/settings.json — marketplace gtk-ai registered"
+    success "$HOME/.claude/settings.json — marketplace gtk-ai registered"
   fi
 elif [ ! -f "$SETTINGS_FILE" ]; then
   jq_create '{
@@ -259,7 +262,7 @@ elif [ ! -f "$SETTINGS_FILE" ]; then
     }
   }
 }' "$SETTINGS_FILE"
-  success "~/.claude/settings.json — created with marketplace gtk-ai"
+  success "$HOME/.claude/settings.json — created with marketplace gtk-ai"
 else
   warn "jq not found — skipping settings.json update. Add the marketplace manually."
 fi
@@ -268,18 +271,19 @@ fi
 if [ -d "$MARKETPLACE_DIR/.git" ]; then
   info "Marketplace cache exists — updating..."
   git -C "$MARKETPLACE_DIR" pull --ff-only -q 2>/dev/null || warn "Could not update marketplace cache"
-  if ! git -C "$MARKETPLACE_DIR" checkout "v$INSTALLED_VERSION" -q 2>/dev/null; then
-    warn "Version v$INSTALLED_VERSION not found as tag — using default branch"
+  if git -C "$MARKETPLACE_DIR" checkout "v$INSTALLED_VERSION" -q 2>/dev/null; then
+    success "$HOME/.claude/plugins/marketplaces/gtk-ai pinned to v$INSTALLED_VERSION"
   else
-    success "~/.claude/plugins/marketplaces/gtk-ai pinned to v$INSTALLED_VERSION"
+    warn "Tag v$INSTALLED_VERSION not found — using default branch"
   fi
 else
   info "Cloning marketplace cache..."
-  git clone --depth 1 "https://github.com/$REPO.git" "$MARKETPLACE_DIR" >/dev/null 2>&1
-  if ! git -C "$MARKETPLACE_DIR" checkout "v$INSTALLED_VERSION" -q 2>/dev/null; then
-    warn "Version v$INSTALLED_VERSION not found as tag — using default branch"
+  if git clone --depth 1 --branch "v$INSTALLED_VERSION" "https://github.com/$REPO.git" "$MARKETPLACE_DIR" >/dev/null 2>&1; then
+    success "$HOME/.claude/plugins/marketplaces/gtk-ai cloned at v$INSTALLED_VERSION"
+  elif git clone --depth 1 "https://github.com/$REPO.git" "$MARKETPLACE_DIR" >/dev/null 2>&1; then
+    warn "Tag v$INSTALLED_VERSION not found — using default branch"
   else
-    success "~/.claude/plugins/marketplaces/gtk-ai cloned and pinned to v$INSTALLED_VERSION"
+    error "Failed to clone marketplace repository"
   fi
 fi
 
@@ -287,13 +291,13 @@ fi
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%S.000Z")
 if [ -f "$KNOWN_MARKETPLACES" ] && $HAS_JQ; then
   if jq -e '.["gtk-ai"]' "$KNOWN_MARKETPLACES" >/dev/null 2>&1; then
-    info "~/.claude/plugins/known_marketplaces.json — gtk-ai already indexed"
+    info "$HOME/.claude/plugins/known_marketplaces.json — gtk-ai already indexed"
   else
     jq_update \
       --arg loc "$MARKETPLACE_DIR" --arg now "$NOW" \
       '.["gtk-ai"] = {"source": {"source": "github", "repo": "jmeiracorbal/gtk-ai"}, "installLocation": $loc, "lastUpdated": $now}' \
       "$KNOWN_MARKETPLACES"
-    success "~/.claude/plugins/known_marketplaces.json — gtk-ai indexed"
+    success "$HOME/.claude/plugins/known_marketplaces.json — gtk-ai indexed"
   fi
 elif ! [ -f "$KNOWN_MARKETPLACES" ]; then
   jq_create "{
@@ -303,7 +307,7 @@ elif ! [ -f "$KNOWN_MARKETPLACES" ]; then
     \"lastUpdated\": \"$NOW\"
   }
 }" "$KNOWN_MARKETPLACES"
-  success "~/.claude/plugins/known_marketplaces.json — created with gtk-ai"
+  success "$HOME/.claude/plugins/known_marketplaces.json — created with gtk-ai"
 else
   warn "jq not found — skipping known_marketplaces.json update."
 fi
@@ -319,19 +323,19 @@ condensed formatting, or comment line removal.
 The hook is active only when the Claude plugin is installed and enabled.
 Run `claude plugin install -s user gtk-ai@gtk-ai` if you have not done so.
 PROTOCOL
-success "~/.claude/gtk-ai.md written"
+success "$HOME/.claude/gtk-ai.md written"
 
 # Inject @gtk-ai.md into CLAUDE.md
 if [ -f "$CLAUDE_MD" ]; then
   if grep -q "@gtk-ai.md" "$CLAUDE_MD" 2>/dev/null; then
-    info "~/.claude/CLAUDE.md — already up to date"
+    info "$HOME/.claude/CLAUDE.md — already up to date"
   else
     printf '\n@gtk-ai.md\n' >> "$CLAUDE_MD"
-    success "~/.claude/CLAUDE.md updated"
+    success "$HOME/.claude/CLAUDE.md updated"
   fi
 else
   printf '@gtk-ai.md\n' > "$CLAUDE_MD"
-  success "~/.claude/CLAUDE.md created"
+  success "$HOME/.claude/CLAUDE.md created"
 fi
 
 # ── RTK warning ───────────────────────────────────────────────────────────────
@@ -347,7 +351,11 @@ rm -rf "$TMP_DIR"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 
-printf "\n${BOLD}${GREEN}gtk-ai installed.${RESET}\n\n"
-printf "To activate the Claude plugin, run:\n\n"
-printf "  ${BOLD}claude plugin install -s user gtk-ai@gtk-ai${RESET}\n\n"
-printf "Then restart Claude Code.\n\n"
+if [ -n "$CLAUDE_ONLY" ]; then
+  printf '\n%s\n\n' "${BOLD}${GREEN}Claude configuration completed.${RESET}"
+else
+  printf '\n%s\n\n' "${BOLD}${GREEN}gtk-ai installed.${RESET}"
+fi
+printf 'To activate the Claude plugin, run:\n\n'
+printf '  %s\n\n' "${BOLD}claude plugin install -s user gtk-ai@gtk-ai${RESET}"
+printf 'Then restart Claude Code.\n\n'
